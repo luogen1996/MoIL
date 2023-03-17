@@ -74,21 +74,10 @@ class ViLTransformerSS(pl.LightningModule):
                     new_state_dict[n.replace('qkv','k_init')] = k.clone()
                     new_state_dict[n.replace('qkv','v_init')] = v.clone()
 
-                    if self.hparams.config['ema']:
-                        new_state_dict[n.replace('qkv','q_ema')] = q.clone()
-                        new_state_dict[n.replace('qkv','k_ema')] = k.clone()
-                        new_state_dict[n.replace('qkv','v_ema')] = v.clone()
+                    new_state_dict[n.replace('qkv','q_ema')] = q.clone()
+                    new_state_dict[n.replace('qkv','k_ema')] = k.clone()
+                    new_state_dict[n.replace('qkv','v_ema')] = v.clone()
 
-                if self.hparams.config['mlp']:
-                    if 'mlp.fc1' in n:
-                        new_state_dict[n.replace('fc1','fc1_init')] = state_dict[n].clone()
-                        if self.hparams.config['ema']:
-                            new_state_dict[n.replace('fc1','fc1_ema')] = state_dict[n].clone()
-                    elif 'mlp.fc2' in n:
-                        new_state_dict[n.replace('fc2','fc2_init')] = state_dict[n].clone()
-                        if self.hparams.config['ema']:
-                            new_state_dict[n.replace('fc2','fc2_ema')] = state_dict[n].clone()
-            
             new_state_dict.update(state_dict)
             missing_keys, unexpected_keys = self.load_state_dict(new_state_dict, strict=False)
             print('missing keys:', missing_keys)
@@ -144,44 +133,23 @@ class ViLTransformerSS(pl.LightningModule):
             p.requires_grad = False
         
         for layer in range(config["num_layers"]):
-            if self.hparams.config["q"]:
-                for p in self.transformer.blocks[layer].attn.q.parameters():
-                    p.requires_grad = True
-                if self.hparams.config["dl"]:
-                    for p in self.transformer.blocks[layer].attn.q_lora.parameters():
-                        p.requires_grad = True
-            if self.hparams.config["k"]:
-                for p in self.transformer.blocks[layer].attn.k.parameters():
-                    p.requires_grad = True
-                if self.hparams.config["dl"]:
-                    for p in self.transformer.blocks[layer].attn.k_lora.parameters():
-                        p.requires_grad = True
-            if self.hparams.config["v"]:
-                for p in self.transformer.blocks[layer].attn.v.parameters():
-                    p.requires_grad = True
-                if self.hparams.config["dl"]:
-                    for p in self.transformer.blocks[layer].attn.v_lora.parameters():
-                        p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.q.parameters():
+                p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.q_lora.parameters():
+                p.requires_grad = True
             
-            if self.hparams.config["dm"]:
-                for p in self.transformer.blocks[layer].attn.adapter.parameters():
-                    p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.k.parameters():
+                p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.k_lora.parameters():
+                p.requires_grad = True
             
-            if self.hparams.config["mlp"]:
-                for p in self.transformer.blocks[layer].mlp.fc1.parameters():
-                    p.requires_grad = True
-                for p in self.transformer.blocks[layer].mlp.fc2.parameters():
-                    p.requires_grad = True
-                if self.hparams.config["dl"]:
-                    for p in self.transformer.blocks[layer].mlp.lora1.parameters():
-                        p.requires_grad = True
-                    for p in self.transformer.blocks[layer].mlp.lora2.parameters():
-                        p.requires_grad = True
-                if self.hparams.config["dm"]:
-                    for p in self.transformer.blocks[layer].mlp.adapter1.parameters():
-                        p.requires_grad = True
-                    for p in self.transformer.blocks[layer].mlp.adapter2.parameters():
-                        p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.v.parameters():
+                p.requires_grad = True
+            for p in self.transformer.blocks[layer].attn.v_lora.parameters():
+                p.requires_grad = True
+            
+            for p in self.transformer.blocks[layer].attn.adapter.parameters():
+                p.requires_grad = True
         
         self.I = nn.Parameter(torch.eye(config["hidden_size"], config["hidden_size"]))
         self.I.requires_grad = False
@@ -195,9 +163,9 @@ class ViLTransformerSS(pl.LightningModule):
         print()
         total_num = sum(p.numel() for p in self.parameters())
         model_num = sum(p.numel() for n, p in self.named_parameters() 
-        if '_init' not in n and '_ema' not in n and '_val' not in n and 'lora' not in n and 'adapter' not in n and 'prompt' not in n)
+        if '_init' not in n and '_ema' not in n and '_val' not in n and 'lora' not in n and 'adapter' not in n)
         trainable_num = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        ada_num = sum(p.numel() for n, p in self.named_parameters() if ('adapter' in n or 'lora' in n or 'prompt' in n) and p.requires_grad)
+        ada_num = sum(p.numel() for n, p in self.named_parameters() if ('adapter' in n or 'lora' in n ) and p.requires_grad)
         heads_num = sum(p.numel() for n, p in self.named_parameters() if ('pooler' in n or 'rank_output' in n or '_classifier' in n) and p.requires_grad)
 
         params = {'Total': total_num, 'Model': model_num, 'Trainable': trainable_num, 'Adapter': ada_num, 'Head': heads_num}
@@ -331,47 +299,7 @@ class ViLTransformerSS(pl.LightningModule):
             _weight = (m_init.weight + m_lora.B @ m_lora.A) @ (self.I + m_adapter.B.weight @ m_adapter.A.weight)
             _bias = (m_init.weight + m_lora.B @ m_lora.A) @ (m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias) + m_init.bias
             return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_qkv_weight_dm(m, m_adapter, m_init):
-            _weight = m_init.weight @ (self.I + m_adapter.B.weight @ m_adapter.A.weight)
-            _bias = m_init.weight @ (m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias) + m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_qkv_weight_dl(m, m_init, m_lora):
-            _weight = m_init.weight + m_lora.B @ m_lora.A
-            _bias = m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight1(m_init, m_adapter, m_lora, m):
-            _weight = (m_init.weight + m_lora.B @ m_lora.A) @ (self.I + m_adapter.B.weight @ m_adapter.A.weight)
-            _bias = (m_init.weight + m_lora.B @ m_lora.A) @ (m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias) + m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight1_dm(m_init, m_adapter, m):
-            _weight = m_init.weight @ (self.I + m_adapter.B.weight @ m_adapter.A.weight)
-            _bias = m_init.weight @ (m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias) + m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight1_dl(m_init, m_lora, m):
-            _weight = m_init.weight + m_lora.B @ m_lora.A
-            _bias = m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight2(m_init, m_adapter, m_lora, m):
-            _weight = (self.I + m_adapter.B.weight @ m_adapter.A.weight) @ (m_init.weight + m_lora.B @ m_lora.A)
-            _bias = (self.I + m_adapter.B.weight @ m_adapter.A.weight) @ m_init.bias + m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight2_dm(m_init, m_adapter, m):
-            _weight = (self.I + m_adapter.B.weight @ m_adapter.A.weight) @ m_init.weight
-            _bias = (self.I + m_adapter.B.weight @ m_adapter.A.weight) @ m_init.bias + m_adapter.B.weight @ m_adapter.A.bias + m_adapter.B.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
-        def compute_mlp_weight2_dl(m_init, m_lora, m):
-            _weight = m_init.weight + m_lora.B @ m_lora.A
-            _bias = m_init.bias
-            return compute_linear_loss(m, _weight, _bias)
-        
+
         def compute_linear_loss(m, _weight, _bias):
             loss_m_weight = ((m.weight - _weight)**2).mean(dim=0).mean(dim=0)
             loss_m_bias = ((m.bias - _bias)**2).mean()
@@ -381,78 +309,19 @@ class ViLTransformerSS(pl.LightningModule):
             m_ema.weight.data = ema_rate*m_ema.weight.data + (1-ema_rate)*m.weight.data
             m_ema.bias.data = ema_rate*m_ema.bias.data + (1-ema_rate)*m.bias.data
         
-        ema_rate = 0.9996
-        loss_q = loss_k = loss_v = loss_mlp = 0
+        ema_rate = self.hparams.config["ema"]
+        loss_q = loss_k = loss_v = 0
         for layer in range(len(self.transformer.blocks)):
             a = self.transformer.blocks[layer].attn
-            if self.hparams.config["ema"]:
-                if self.hparams.config["q"]:
-                    compute_ema(a.q, a.q_ema)
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_q += compute_qkv_weight(a.q_ema, a.adapter, a.q_init, a.q_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_q += compute_qkv_weight_dm(a.q_ema, a.adapter, a.q_init)
-                    else:
-                        loss_q += compute_qkv_weight_dl(a.q_ema, a.q_init, a.q_lora)
-                if self.hparams.config["k"]:
-                    compute_ema(a.k, a.k_ema)
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_k += compute_qkv_weight(a.k_ema, a.adapter, a.k_init, a.k_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_k += compute_qkv_weight_dm(a.k_ema, a.adapter, a.k_init)
-                    else:
-                        loss_k += compute_qkv_weight_dl(a.k_ema, a.k_init, a.k_lora)
-                if self.hparams.config["v"]:
-                    compute_ema(a.v, a.v_ema)
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_v += compute_qkv_weight(a.v_ema, a.adapter, a.v_init, a.v_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_v += compute_qkv_weight_dm(a.v_ema, a.adapter, a.v_init)
-                    else:
-                        loss_v += compute_qkv_weight_dl(a.v_ema, a.v_init, a.v_lora)
-            else:
-                if self.hparams.config["q"]:
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_q += compute_qkv_weight(a.q, a.adapter, a.q_init, a.q_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_q += compute_qkv_weight_dm(a.q, a.adapter, a.q_init)
-                    else:
-                        loss_q += compute_qkv_weight_dl(a.q, a.q_init, a.q_lora)
-                if self.hparams.config["k"]:
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_k += compute_qkv_weight(a.k, a.adapter, a.k_init, a.k_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_k += compute_qkv_weight_dm(a.k, a.adapter, a.k_init)
-                    else:
-                        loss_k += compute_qkv_weight_dl(a.k, a.k_init, a.k_lora)
-                if self.hparams.config["v"]:
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_v += compute_qkv_weight(a.v, a.adapter, a.v_init, a.v_lora)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_v += compute_qkv_weight_dm(a.v, a.adapter, a.v_init)
-                    else:
-                        loss_v += compute_qkv_weight_dl(a.v, a.v_init, a.v_lora)
+            compute_ema(a.q, a.q_ema)
+            compute_ema(a.k, a.k_ema)
+            compute_ema(a.v, a.v_ema)
 
-            if self.hparams.config["mlp"]:
-                b = self.transformer.blocks[layer].mlp
-                if self.hparams.config["ema"]:
-                    compute_ema(b.fc1, b.fc1_ema)
-                    compute_ema(b.fc2, b.fc2_ema)
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_mlp += compute_mlp_weight1(b.fc1_init, b.adapter1, b.lora1, b.fc1_ema) + compute_mlp_weight2(b.fc2_init, b.adapter2, b.lora2, b.fc2_ema)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_mlp += compute_mlp_weight1_dm(b.fc1_init, b.adapter1, b.fc1_ema) + compute_mlp_weight2_dm(b.fc2_init, b.adapter2, b.fc2_ema)
-                    else:
-                        loss_mlp += compute_mlp_weight1_dl(b.fc1_init, b.lora1, b.fc1_ema) + compute_mlp_weight2_dl(b.fc2_init, b.lora2, b.fc2_ema)
-                else:
-                    if self.hparams.config["dm"] and self.hparams.config["dl"]:
-                        loss_mlp += compute_mlp_weight1(b.fc1_init, b.adapter1, b.lora1, b.fc1) + compute_mlp_weight2(b.fc2_init, b.adapter2, b.lora2, b.fc2)
-                    elif self.hparams.config["dm"] and not self.hparams.config["dl"]:
-                        loss_mlp += compute_mlp_weight1_dm(b.fc1_init, b.adapter1, b.fc1) + compute_mlp_weight2_dm(b.fc2_init, b.adapter2, b.fc2)
-                    else:
-                        loss_mlp += compute_mlp_weight1_dl(b.fc1_init, b.lora1, b.fc1) + compute_mlp_weight2_dl(b.fc2_init, b.lora2, b.fc2)
-
-        return total_loss + loss_q + loss_k + loss_v + loss_mlp
+            loss_q += compute_qkv_weight(a.q_ema, a.adapter, a.q_init, a.q_lora)
+            loss_k += compute_qkv_weight(a.k_ema, a.adapter, a.k_init, a.k_lora)
+            loss_v += compute_qkv_weight(a.v_ema, a.adapter, a.v_init, a.v_lora)
+        
+        return total_loss + loss_q + loss_k + loss_v
 
     def training_epoch_end(self, outs):
         vilt_utils.epoch_wrapup(self)

@@ -282,131 +282,7 @@ class Mlp(nn.Module):
         return x
 
 
-class CustomMlp(nn.Module):
-    def __init__(
-        self,
-        in_features,
-        hidden_features=None,
-        out_features=None,
-        act_layer=nn.GELU,
-        drop=0.0,
-        config=None
-    ):
-        super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
-
-        if config['mlp']:
-            self.fc1_init = nn.Linear(in_features, hidden_features)
-            self.fc1_val = nn.Linear(in_features, hidden_features)
-            self.fc2_init = nn.Linear(hidden_features, out_features)
-            self.fc2_val = nn.Linear(hidden_features, out_features)
-            if config['dl']:
-                self.lora1 = moil.LoRA(in_features, hidden_features, dim=config['dl_dim'])
-                self.lora2 = moil.LoRA(hidden_features, out_features, dim=config['dl_dim'])
-            if config['ema']:
-                self.fc1_ema = nn.Linear(in_features, hidden_features)
-                self.fc2_ema = nn.Linear(hidden_features, out_features)
-            if config['dm']:
-                self.adapter1 = moil.Adapter(in_features, in_features, dim=config['dm_dim'])
-                self.adapter2 = moil.Adapter(out_features, out_features, dim=config['dm_dim'])
-        
-        self.config=config
-
-    def forward(self, x, I=None, val_mode=None):
-        if self.training or val_mode=='qkv' or not self.config['mlp']:
-            x = self.drop(self.fc2(self.drop(self.act(self.fc1(x)))))
-        elif val_mode == 'ema':
-            x = self.drop(self.fc2_ema(self.drop(self.act(self.fc1_ema(x)))))
-        else:
-            if self.config['dm'] and self.config['dl']:
-                self.fc1_val.weight.data = (self.fc1_init.weight + self.lora1.B @ self.lora1.A) @ (I + self.adapter1.B.weight @ self.adapter1.A.weight)
-                self.fc1_val.bias.data = (self.fc1_init.weight + self.lora1.B @ self.lora1.A) @ (self.adapter1.B.weight @ self.adapter1.A.bias + self.adapter1.B.bias) + self.fc1_init.bias
-
-                self.fc2_val.weight.data = (I + self.adapter2.B.weight @ self.adapter2.A.weight) @ (self.fc2_init.weight + self.lora2.B @ self.lora2.A)
-                self.fc2_val.bias.data = (I + self.adapter2.B.weight @ self.adapter2.A.weight) @ self.fc2_init.bias + self.adapter2.B.weight @ self.adapter2.A.bias + self.adapter2.B.bias
-            elif self.config['dm'] and not self.config['dl']:
-                self.fc1_val.weight.data = self.fc1_init.weight @ (I + self.adapter1.B.weight @ self.adapter1.A.weight)
-                self.fc1_val.bias.data = self.fc1_init.weight @ (self.adapter1.B.weight @ self.adapter1.A.bias + self.adapter1.B.bias) + self.fc1_init.bias
-
-                self.fc2_val.weight.data = (I + self.adapter2.B.weight @ self.adapter2.A.weight) @ self.fc2_init.weight
-                self.fc2_val.bias.data = (I + self.adapter2.B.weight @ self.adapter2.A.weight) @ self.fc2_init.bias + self.adapter2.B.weight @ self.adapter2.A.bias + self.adapter2.B.bias
-            else:
-                self.fc1_val.weight.data = self.fc1_init.weight + self.lora1.B @ self.lora1.A
-                self.fc1_val.bias.data = self.fc1_init.bias
-
-                self.fc2_val.weight.data = self.fc2_init.weight + self.lora2.B @ self.lora2.A
-                self.fc2_val.bias.data = self.fc2_init.bias
-            
-            x = self.drop(self.fc2_val(self.drop(self.act(self.fc1_val(x)))))
-            
-        return x
-
-
 class Attention(nn.Module):
-    def __init__(
-        self,
-        dim,
-        num_heads=8,
-        qkv_bias=False,
-        qk_scale=None,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        adapter=None,
-        lora_dim=96
-    ):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
-        self.scale = qk_scale or head_dim ** -0.5
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-        if adapter=='lora':
-            self.q_lora = lora.LoRA(dim, dim, dim=lora_dim, alpha=lora_dim)
-            self.v_lora = lora.LoRA(dim, dim, dim=lora_dim, alpha=lora_dim)
-
-        self.adapter=adapter
-
-    def forward(self, x, mask=None):
-        B, N, C = x.shape
-        qkv = (
-            self.qkv(x)
-            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
-            .permute(2, 0, 3, 1, 4)
-        )
-        q, k, v = (
-            qkv[0],
-            qkv[1],
-            qkv[2],
-        )  # make torchscript happy (cannot use tensor as tuple)
-
-        if self.adapter=='lora':
-            q = q + self.q_lora(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-            v = v + self.v_lora(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        if mask is not None:
-            mask = mask.bool()
-            attn = attn.masked_fill(~mask[:, None, None, :], float("-inf"))
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x, attn
-
-
-class CustomAttention(nn.Module):
     def __init__(
         self,
         dim,
@@ -431,33 +307,25 @@ class CustomAttention(nn.Module):
         self.k = nn.Linear(dim, dim, bias=qkv_bias)
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
 
-        if config['q']:
-            if config['dl']:
-                self.q_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
-            self.q_init = nn.Linear(dim, dim, bias=qkv_bias)
-            self.q_val = nn.Linear(dim, dim, bias=qkv_bias)
-            if config['ema']:
-                self.q_ema = nn.Linear(dim, dim, bias=qkv_bias)
-        if config['k']:
-            if config['dl']:
-                self.k_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
-            self.k_init = nn.Linear(dim, dim, bias=qkv_bias)
-            self.k_val = nn.Linear(dim, dim, bias=qkv_bias)
-            if config['ema']:
-                self.k_ema = nn.Linear(dim, dim, bias=qkv_bias)
-        if config['v']:
-            if config['dl']:
-                self.v_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
-            self.v_init = nn.Linear(dim, dim, bias=qkv_bias)
-            self.v_val = nn.Linear(dim, dim, bias=qkv_bias)
-            if config['ema']:
-                self.v_ema = nn.Linear(dim, dim, bias=qkv_bias)
-        if config['dm']:
-            self.adapter = moil.Adapter(dim, dim, dim=config['dm_dim'])
+        self.q_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
+        self.q_init = nn.Linear(dim, dim, bias=qkv_bias)
+        self.q_val = nn.Linear(dim, dim, bias=qkv_bias)
+        self.q_ema = nn.Linear(dim, dim, bias=qkv_bias)
+
+        self.k_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
+        self.k_init = nn.Linear(dim, dim, bias=qkv_bias)
+        self.k_val = nn.Linear(dim, dim, bias=qkv_bias)
+        self.k_ema = nn.Linear(dim, dim, bias=qkv_bias)
+
+        self.v_lora = moil.LoRA(dim, dim, dim=config['dl_dim'])
+        self.v_init = nn.Linear(dim, dim, bias=qkv_bias)
+        self.v_val = nn.Linear(dim, dim, bias=qkv_bias)
+        self.v_ema = nn.Linear(dim, dim, bias=qkv_bias)
+
+        self.adapter = moil.Adapter(dim, dim, dim=config['dm_dim'])
 
         self.config = config
         
-
     def forward(self, x, mask=None, val_mode=None, I=None):
         B, N, C = x.shape
         
@@ -471,56 +339,15 @@ class CustomAttention(nn.Module):
             m_val.weight.data = (m_init.weight + m_lora.B @ m_lora.A) @ (I + self.adapter.B.weight @ self.adapter.A.weight)
             m_val.bias.data = (m_init.weight + m_lora.B @ m_lora.A) @ (self.adapter.B.weight @ self.adapter.A.bias + self.adapter.B.bias) + m_init.bias
         
-        def reparameterize_dm(m_val, m_init):
-            m_val.weight.data = m_init.weight @ (I + self.adapter.B.weight @ self.adapter.A.weight)
-            m_val.bias.data = m_init.weight @ (self.adapter.B.weight @ self.adapter.A.bias + self.adapter.B.bias) + m_init.bias
-
-        def reparameterize_dl(m_val, m_init, m_lora):
-            m_val.weight.data = m_init.weight + m_lora.B @ m_lora.A
-            m_val.bias.data = m_init.bias
-        
-        if self.training or val_mode=='qkv' or (not self.config['q'] and not self.config['k'] and not self.config['v']):
+        if self.training or val_mode=='qkv':
             q, k, v = reshape(self.q, self.k, self.v)
         elif val_mode=='ema': 
-            if self.config['q'] and self.config['k'] and self.config['v']:
-                q, k, v = reshape(self.q_ema, self.k_ema, self.v_ema)
-            elif self.config['q'] and self.config['k'] and not self.config['v']:
-                q, k, v = reshape(self.q_ema, self.k_ema, self.v)
-            elif self.config['q'] and not self.config['k'] and self.config['v']:
-                q, k, v = reshape(self.q_ema, self.k, self.v_ema)
-            elif self.config['q'] and not self.config['k'] and not self.config['v']:
-                q, k, v = reshape(self.q_ema, self.k, self.v)
+            q, k, v = reshape(self.q_ema, self.k_ema, self.v_ema)
         else:
-            if self.config['q']:
-                if self.config['dm'] and self.config['dl']:
-                    reparameterize(self.q_val, self.q_init, self.q_lora)
-                elif self.config['dm'] and not self.config['dl']:
-                    reparameterize_dm(self.q_val, self.q_init)
-                else:
-                    reparameterize_dl(self.q_val, self.q_init, self.q_lora)
-            if self.config['k']:
-                if self.config['dm'] and self.config['dl']:
-                    reparameterize(self.k_val, self.k_init, self.k_lora)
-                elif self.config['dm'] and not self.config['dl']:
-                    reparameterize_dm(self.k_val, self.k_init)
-                else:
-                    reparameterize_dl(self.k_val, self.k_init, self.k_lora)
-            if self.config['v']:
-                if self.config['dm'] and self.config['dl']:
-                    reparameterize(self.v_val, self.v_init, self.v_lora)
-                elif self.config['dm'] and not self.config['dl']:
-                    reparameterize_dm(self.v_val, self.v_init)
-                else:
-                    reparameterize_dl(self.v_val, self.v_init, self.v_lora)
-
-            if self.config['q'] and self.config['k'] and self.config['v']:
-                q, k, v = reshape(self.q_val, self.k_val, self.v_val)
-            elif self.config['q'] and self.config['k'] and not self.config['v']:
-                q, k, v = reshape(self.q_val, self.k_val, self.v)
-            elif self.config['q'] and not self.config['k'] and self.config['v']:
-                q, k, v = reshape(self.q_val, self.k, self.v_val)
-            elif self.config['q'] and not self.config['k'] and not self.config['v']:
-                q, k, v = reshape(self.q_val, self.k, self.v)
+            reparameterize(self.q_val, self.q_init, self.q_lora)
+            reparameterize(self.k_val, self.k_init, self.k_lora)
+            reparameterize(self.v_val, self.v_init, self.v_lora)
+            q, k, v = reshape(self.q_val, self.k_val, self.v_val)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         if mask is not None:
@@ -548,10 +375,7 @@ class Block(nn.Module):
         drop_path=0.0,
         act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
-        adapter=None,
-        adapter_dim=96,
-        lora_dim=96,
-        prompt_dim=100,
+        config=None
     ):
         super().__init__()
         self.norm1 = norm_layer(dim)
@@ -562,8 +386,7 @@ class Block(nn.Module):
             qk_scale=qk_scale,
             attn_drop=attn_drop,
             proj_drop=drop,
-            adapter=adapter,
-            lora_dim=lora_dim
+            config=config
         )
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -576,68 +399,10 @@ class Block(nn.Module):
             drop=drop,
         )
 
-        if adapter=='vladapter':
-            self.attn_adapter = AdapterLayer(d_model=dim, reduction_factor=int(dim/adapter_dim))
-            self.mlp_adapter = AdapterLayer(d_model=dim, reduction_factor=int(dim/adapter_dim))
-        elif adapter=='prompt':
-            self.prompt = Prompt(d_model=dim, dim=prompt_dim)
-            self.prompt_mask = torch.ones(prompt_dim).long()
-
-        self.adapter=adapter
-    
-    def forward(self, x, mask=None):
-        _x, attn = self.attn(self.norm1(x), mask=mask)
-        if self.adapter=='vladapter':
-            x = x + self.drop_path(self.attn_adapter(_x))
-            x = x + self.drop_path(self.mlp_adapter(self.mlp(self.norm2(x))))
-        else:
-            x = x + self.drop_path(_x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x, attn
-
-
-class CustomBlock(nn.Module):
-    def __init__(
-        self,
-        dim,
-        num_heads,
-        mlp_ratio=4.0,
-        qkv_bias=False,
-        qk_scale=None,
-        drop=0.0,
-        attn_drop=0.0,
-        drop_path=0.0,
-        act_layer=nn.GELU,
-        norm_layer=nn.LayerNorm,
-        config=None
-    ):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = CustomAttention(
-            dim,
-            num_heads=num_heads,
-            qkv_bias=qkv_bias,
-            qk_scale=qk_scale,
-            attn_drop=attn_drop,
-            proj_drop=drop,
-            config=config
-        )
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = CustomMlp(
-            in_features=dim,
-            hidden_features=mlp_hidden_dim,
-            act_layer=act_layer,
-            drop=drop,
-            config=config
-        )
-
     def forward(self, x, mask=None, val_mode=None, I=None):
         _x, attn = self.attn(self.norm1(x), mask=mask, val_mode=val_mode, I=I)
         x = x + self.drop_path(_x)
-        x = x + self.drop_path(self.mlp(self.norm2(x), val_mode=val_mode, I=I))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x, attn
 
 
@@ -752,46 +517,23 @@ class VisionTransformer(nn.Module):
         dpr = [
             x.item() for x in torch.linspace(0, drop_path_rate, depth)
         ]  # stochastic depth decay rule
-
-        if config['adapter']=='moil':
-            self.blocks = nn.ModuleList(
-                [
-                    CustomBlock(
-                        dim=embed_dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=qkv_bias,
-                        qk_scale=qk_scale,
-                        drop=drop_rate,
-                        attn_drop=attn_drop_rate,
-                        drop_path=dpr[i],
-                        norm_layer=norm_layer,
-                        config=config
-                    )
-                    for i in range(depth)
-                ]
-            )
-        else:
-            self.blocks = nn.ModuleList(
-                [
-                    Block(
-                        dim=embed_dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=qkv_bias,
-                        qk_scale=qk_scale,
-                        drop=drop_rate,
-                        attn_drop=attn_drop_rate,
-                        drop_path=dpr[i],
-                        norm_layer=norm_layer,
-                        adapter=config['adapter'],
-                        adapter_dim=config['dm_dim'],
-                        lora_dim=config['dl_dim'],
-                        prompt_dim=config['prompt_dim']
-                    )
-                    for i in range(depth)
-                ]
-            )
+        self.blocks = nn.ModuleList(
+            [
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    qk_scale=qk_scale,
+                    drop=drop_rate,
+                    attn_drop=attn_drop_rate,
+                    drop_path=dpr[i],
+                    norm_layer=norm_layer,
+                    config=config
+                )
+                for i in range(depth)
+            ]
+        )
         self.norm = norm_layer(embed_dim)
 
         trunc_normal_(self.pos_embed, std=0.02)

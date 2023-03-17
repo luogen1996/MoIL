@@ -303,9 +303,8 @@ def compute_vqa(pl_module, batch):
     vqa_logits = pl_module.vqa_classifier(infer["cls_feats"])
     if not pl_module.training:
         if pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                infer_ema = pl_module.infer(batch, mask_text=False, mask_image=False, val_mode='ema')
-                vqa_logits_ema = pl_module.vqa_classifier(infer_ema["cls_feats"])
+            infer_ema = pl_module.infer(batch, mask_text=False, mask_image=False, val_mode='ema')
+            vqa_logits_ema = pl_module.vqa_classifier(infer_ema["cls_feats"])
             infer_qkv = pl_module.infer(batch, mask_text=False, mask_image=False, val_mode='qkv')
             vqa_logits_qkv = pl_module.vqa_classifier(infer_qkv["cls_feats"])
 
@@ -333,8 +332,7 @@ def compute_vqa(pl_module, batch):
         "vqa_scores": vqa_scores,
     }
     if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            ret['vqa_logits_ema'] = vqa_logits_ema
+        ret['vqa_logits_ema'] = vqa_logits_ema
         ret['vqa_logits_qkv'] = vqa_logits_qkv
 
     phase = "train" if pl_module.training else "val"
@@ -343,10 +341,9 @@ def compute_vqa(pl_module, batch):
         ret["vqa_logits"], ret["vqa_targets"]
     )
     if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            score_ema = getattr(pl_module, f"{phase}_vqa_ema_score")(
-                vqa_logits_ema, ret["vqa_targets"]
-            )
+        score_ema = getattr(pl_module, f"{phase}_vqa_ema_score")(
+            vqa_logits_ema, ret["vqa_targets"]
+        )
         score_qkv = getattr(pl_module, f"{phase}_vqa_qkv_score")(
             vqa_logits_qkv, ret["vqa_targets"]
         )
@@ -365,10 +362,9 @@ def compute_nlvr2(pl_module, batch):
     nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
 
     if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            infer1_ema = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=1, val_mode='ema')
-            infer2_ema = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=2, val_mode='ema')
-            nlvr2_logits_ema = pl_module.nlvr2_classifier(torch.cat([infer1_ema["cls_feats"], infer2_ema["cls_feats"]], dim=-1))
+        infer1_ema = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=1, val_mode='ema')
+        infer2_ema = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=2, val_mode='ema')
+        nlvr2_logits_ema = pl_module.nlvr2_classifier(torch.cat([infer1_ema["cls_feats"], infer2_ema["cls_feats"]], dim=-1))
 
         infer1_qkv = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=1, val_mode='qkv')
         infer2_qkv = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=2, val_mode='qkv')
@@ -384,8 +380,7 @@ def compute_nlvr2(pl_module, batch):
         "nlvr2_labels": nlvr2_labels,
     }
     if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            ret['nlvr2_logits_ema'] = nlvr2_logits_ema
+        ret['nlvr2_logits_ema'] = nlvr2_logits_ema
         ret['nlvr2_logits_qkv'] = nlvr2_logits_qkv
 
     phase = "train" if pl_module.training else "val"
@@ -414,9 +409,8 @@ def compute_nlvr2(pl_module, batch):
             pl_module.log(f"nlvr2/dev/accuracy", dev_acc)
 
             if pl_module.hparams.config['adapter']=='moil':
-                if pl_module.hparams.config['ema']:
-                    dev_acc_ema = getattr(pl_module, f"dev_nlvr2_accuracy_ema")(ret["nlvr2_logits_ema"][dev_batches], ret["nlvr2_labels"][dev_batches])
-                    pl_module.log(f"nlvr2/dev/accuracy_ema", dev_acc_ema)
+                dev_acc_ema = getattr(pl_module, f"dev_nlvr2_accuracy_ema")(ret["nlvr2_logits_ema"][dev_batches], ret["nlvr2_labels"][dev_batches])
+                pl_module.log(f"nlvr2/dev/accuracy_ema", dev_acc_ema)
                 
                 dev_acc_qkv = getattr(pl_module, f"dev_nlvr2_accuracy_qkv")(ret["nlvr2_logits_qkv"][dev_batches], ret["nlvr2_labels"][dev_batches])
                 pl_module.log(f"nlvr2/dev/accuracy_qkv", dev_acc_qkv)
@@ -434,9 +428,8 @@ def compute_nlvr2(pl_module, batch):
             pl_module.log(f"nlvr2/test/accuracy", test_acc)
 
             if pl_module.hparams.config['adapter']=='moil':
-                if pl_module.hparams.config['ema']:
-                    test_acc_ema = getattr(pl_module, f"test_nlvr2_accuracy_ema")(ret["nlvr2_logits_ema"][test_batches], ret["nlvr2_labels"][test_batches])
-                    pl_module.log(f"nlvr2/test/accuracy_ema", test_acc_ema)
+                test_acc_ema = getattr(pl_module, f"test_nlvr2_accuracy_ema")(ret["nlvr2_logits_ema"][test_batches], ret["nlvr2_labels"][test_batches])
+                pl_module.log(f"nlvr2/test/accuracy_ema", test_acc_ema)
 
                 test_acc_qkv = getattr(pl_module, f"test_nlvr2_accuracy_qkv")(ret["nlvr2_logits_qkv"][test_batches], ret["nlvr2_labels"][test_batches])
                 pl_module.log(f"nlvr2/test/accuracy_qkv", test_acc_qkv)
@@ -548,8 +541,7 @@ def compute_irtr_recall(pl_module):
 
     rank_scores = list()
     if pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            rank_scores_ema = list()
+        rank_scores_ema = list()
         rank_scores_qkv = list()
 
     rank_iids = list()
@@ -560,8 +552,7 @@ def compute_irtr_recall(pl_module):
 
         img_batch_score = list()
         if pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                img_batch_score_ema = list()
+            img_batch_score_ema = list()
             img_batch_score_qkv = list()
 
         for txt_batch in text_preload:
@@ -582,19 +573,18 @@ def compute_irtr_recall(pl_module):
                     )["cls_feats"]
                 )[:, 0]
                 if pl_module.hparams.config['adapter']=='moil':
-                    if pl_module.hparams.config['ema']:
-                        score_ema = pl_module.rank_output(
-                            pl_module.infer(
-                                {
-                                    "text_ids": txt_batch["text_ids"],
-                                    "text_masks": txt_batch["text_masks"],
-                                    "text_labels": txt_batch["text_labels"],
-                                },
-                                image_embeds=ie,
-                                image_masks=im,
-                                val_mode='ema'
-                            )["cls_feats"]
-                            )[:, 0]
+                    score_ema = pl_module.rank_output(
+                        pl_module.infer(
+                            {
+                                "text_ids": txt_batch["text_ids"],
+                                "text_masks": txt_batch["text_masks"],
+                                "text_labels": txt_batch["text_labels"],
+                            },
+                            image_embeds=ie,
+                            image_masks=im,
+                            val_mode='ema'
+                        )["cls_feats"]
+                        )[:, 0]
                     score_qkv = pl_module.rank_output(
                         pl_module.infer(
                             {
@@ -610,23 +600,20 @@ def compute_irtr_recall(pl_module):
 
             img_batch_score.append(score)
             if pl_module.hparams.config['adapter']=='moil':
-                if pl_module.hparams.config['ema']:
-                    img_batch_score_ema.append(score_ema)
+                img_batch_score_ema.append(score_ema)
                 img_batch_score_qkv.append(score_qkv)
 
         rank_iids.append(_iid)
         rank_scores.append(torch.cat(img_batch_score).cpu().tolist())
         if pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                rank_scores_ema.append(torch.cat(img_batch_score_ema).cpu().tolist())
+            rank_scores_ema.append(torch.cat(img_batch_score_ema).cpu().tolist())
             rank_scores_qkv.append(torch.cat(img_batch_score_qkv).cpu().tolist())
 
     torch.distributed.barrier()
     iids = torch.tensor(all_gather(rank_iids)).view(-1)
     scores = torch.tensor(all_gather(rank_scores)).view(len(iids), -1)
     if pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            scores_ema = torch.tensor(all_gather(rank_scores_ema)).view(len(iids), -1)
+        scores_ema = torch.tensor(all_gather(rank_scores_ema)).view(len(iids), -1)
         scores_qkv = torch.tensor(all_gather(rank_scores_qkv)).view(len(iids), -1)
 
     def compute_top(_scores):
@@ -657,11 +644,8 @@ def compute_irtr_recall(pl_module):
     (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_top(scores)
     if pl_module.hparams.config['adapter']=='moil':
         (ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv) = compute_top(scores_qkv)
-        if pl_module.hparams.config['ema']:
-            (ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema) = compute_top(scores_ema)
-            return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv)
-        else:
-            return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv)
+        (ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema) = compute_top(scores_ema)
+        return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv)
     return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10)
 
 

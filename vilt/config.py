@@ -84,13 +84,7 @@ def config():
     adapter = 'moil'
     dm_dim = 96    # adapter dim
     dl_dim = 96    # lora dim
-    q = True
-    k = True
-    v = True
-    ema = True
-    dm = True
-    dl = True
-    mlp = False
+    ema = 0.9996
 
 # Named configs for "environment" which define gpus and nodes, and paths
 @ex.named_config

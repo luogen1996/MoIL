@@ -18,8 +18,7 @@ def set_metrics(pl_module):
                 continue
             if k == "vqa":
                 setattr(pl_module, f"{split}_vqa_score", VQAScore())
-                if pl_module.hparams.config['ema']:
-                    setattr(pl_module, f"{split}_vqa_ema_score", VQAScore())
+                setattr(pl_module, f"{split}_vqa_ema_score", VQAScore())
                 setattr(pl_module, f"{split}_vqa_qkv_score", VQAScore())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
             elif k == "nlvr2":
@@ -32,9 +31,8 @@ def set_metrics(pl_module):
                     setattr(pl_module, f"test_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"test_{k}_loss", Scalar())
                     
-                    if pl_module.hparams.config['ema']:
-                        setattr(pl_module, f"dev_{k}_accuracy_ema", Accuracy())
-                        setattr(pl_module, f"test_{k}_accuracy_ema", Accuracy())
+                    setattr(pl_module, f"dev_{k}_accuracy_ema", Accuracy())
+                    setattr(pl_module, f"test_{k}_accuracy_ema", Accuracy())
                     
                     setattr(pl_module, f"dev_{k}_accuracy_qkv", Accuracy())
                     setattr(pl_module, f"test_{k}_accuracy_qkv", Accuracy())
@@ -56,16 +54,12 @@ def epoch_wrapup(pl_module):
     phase = "train" if pl_module.training else "val"
     the_metric = 0
     if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-        if pl_module.hparams.config['ema']:
-            ema_metric = 0
+        ema_metric = 0
         qkv_metric = 0
 
     if pl_module.hparams.config["get_recall_metric"] and not pl_module.training and pl_module.current_epoch>7:
         if pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv) = compute_irtr_recall(pl_module)
-            else:
-                (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv) = compute_irtr_recall(pl_module)
+            (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10, ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema, ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv) = compute_irtr_recall(pl_module)
         else:
             (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
 
@@ -73,8 +67,7 @@ def epoch_wrapup(pl_module):
             print()
             print('adapter:',(ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10), pl_module.global_step)
             if pl_module.hparams.config['adapter']=='moil':
-                if pl_module.hparams.config['ema']:
-                    print('ema:',(ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema), pl_module.global_step)
+                print('ema:',(ir_r1_ema, ir_r5_ema, ir_r10_ema, tr_r1_ema, tr_r5_ema, tr_r10_ema), pl_module.global_step)
                 print('origin:',(ir_r1_qkv, ir_r5_qkv, ir_r10_qkv, tr_r1_qkv, tr_r5_qkv, tr_r10_qkv), pl_module.global_step)
 
         pl_module.logger.experiment.add_scalar(
@@ -103,8 +96,7 @@ def epoch_wrapup(pl_module):
 
         value = 0
         if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                value_ema = 0
+            value_ema = 0
             value_qkv = 0
 
         if loss_name == "vqa":
@@ -113,9 +105,8 @@ def epoch_wrapup(pl_module):
             getattr(pl_module, f"{phase}_{loss_name}_score").reset()
 
             if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-                if pl_module.hparams.config['ema']:
-                    value_ema = getattr(pl_module, f"{phase}_{loss_name}_ema_score").compute()
-                    getattr(pl_module, f"{phase}_{loss_name}_ema_score").reset()
+                value_ema = getattr(pl_module, f"{phase}_{loss_name}_ema_score").compute()
+                getattr(pl_module, f"{phase}_{loss_name}_ema_score").reset()
 
                 value_qkv = getattr(pl_module, f"{phase}_{loss_name}_qkv_score").compute()
                 getattr(pl_module, f"{phase}_{loss_name}_qkv_score").reset()
@@ -155,14 +146,13 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"test_{loss_name}_loss").reset()
 
                 if pl_module.hparams.config['adapter']=='moil':
-                    if pl_module.hparams.config['ema']:
-                        value_ema = getattr(pl_module, f"dev_{loss_name}_accuracy_ema").compute()
-                        pl_module.log(f"{loss_name}/dev/accuracy_epoch_ema", value_ema)
-                        getattr(pl_module, f"dev_{loss_name}_accuracy_ema").reset()
+                    value_ema = getattr(pl_module, f"dev_{loss_name}_accuracy_ema").compute()
+                    pl_module.log(f"{loss_name}/dev/accuracy_epoch_ema", value_ema)
+                    getattr(pl_module, f"dev_{loss_name}_accuracy_ema").reset()
 
-                        value_ema = getattr(pl_module, f"test_{loss_name}_accuracy_ema").compute()
-                        pl_module.log(f"{loss_name}/test/accuracy_epoch_ema", value_ema)
-                        getattr(pl_module, f"test_{loss_name}_accuracy_ema").reset()
+                    value_ema = getattr(pl_module, f"test_{loss_name}_accuracy_ema").compute()
+                    pl_module.log(f"{loss_name}/test/accuracy_epoch_ema", value_ema)
+                    getattr(pl_module, f"test_{loss_name}_accuracy_ema").reset()
                     
                     value_qkv = getattr(pl_module, f"dev_{loss_name}_accuracy_qkv").compute()
                     pl_module.log(f"{loss_name}/dev/accuracy_epoch_qkv", value_qkv)
@@ -210,8 +200,7 @@ def epoch_wrapup(pl_module):
 
         the_metric += value
         if not pl_module.training and pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                ema_metric += value_ema
+            ema_metric += value_ema
             qkv_metric += value_qkv
 
     pl_module.log(f"{phase}/the_metric", the_metric)
@@ -219,8 +208,7 @@ def epoch_wrapup(pl_module):
         print()
         print(f"{phase}/adapter_metric " + str(the_metric), flush=True)
         if pl_module.hparams.config['adapter']=='moil':
-            if pl_module.hparams.config['ema']:
-                print(f"{phase}/ema_metric " + str(ema_metric), flush=True)
+            print(f"{phase}/ema_metric " + str(ema_metric), flush=True)
             print(f"{phase}/origin_metric " + str(qkv_metric), flush=True)
 
 
