@@ -123,6 +123,8 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.set_metrics(self)
         self.current_tasks = list()
 
+        self.moil_step_size = 5
+
         for p in self.text_embeddings.parameters():
             p.requires_grad = False
         for p in self.token_type_embeddings.parameters():
@@ -311,15 +313,17 @@ class ViLTransformerSS(pl.LightningModule):
         
         ema_rate = self.hparams.config["ema"]
         loss_q = loss_k = loss_v = 0
-        for layer in range(len(self.transformer.blocks)):
-            a = self.transformer.blocks[layer].attn
-            compute_ema(a.q, a.q_ema)
-            compute_ema(a.k, a.k_ema)
-            compute_ema(a.v, a.v_ema)
 
-            loss_q += compute_qkv_weight(a.q_ema, a.adapter, a.q_init, a.q_lora)
-            loss_k += compute_qkv_weight(a.k_ema, a.adapter, a.k_init, a.k_lora)
-            loss_v += compute_qkv_weight(a.v_ema, a.adapter, a.v_init, a.v_lora)
+        if self.trainer.global_step%self.moil_step_size==0 and self.trainer.global_step!=0:
+            for layer in range(len(self.transformer.blocks)):
+                a = self.transformer.blocks[layer].attn
+                compute_ema(a.q, a.q_ema)
+                compute_ema(a.k, a.k_ema)
+                compute_ema(a.v, a.v_ema)
+
+                loss_q += compute_qkv_weight(a.q_ema, a.adapter, a.q_init, a.q_lora)
+                loss_k += compute_qkv_weight(a.k_ema, a.adapter, a.k_init, a.k_lora)
+                loss_v += compute_qkv_weight(a.v_ema, a.adapter, a.v_init, a.v_lora)
         
         return total_loss + loss_q + loss_k + loss_v
 
