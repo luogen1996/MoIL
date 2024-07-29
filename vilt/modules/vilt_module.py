@@ -123,7 +123,7 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.set_metrics(self)
         self.current_tasks = list()
 
-        self.moil_step_size = 5
+        self.moil_step_size = 1
 
         for p in self.text_embeddings.parameters():
             p.requires_grad = False
